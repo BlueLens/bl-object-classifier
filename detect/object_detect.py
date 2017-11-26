@@ -1,16 +1,16 @@
 from __future__ import print_function
 
 import grpc
-import numpy as np
+import os
 from detect import object_detect_pb2
 from detect import object_detect_pb2_grpc
 
-HOST = 'localhost'
-PORT = '50052'
+OD_HOST = os.environ['OD_HOST']
+OD_PORT = os.environ['OD_PORT']
 
 class ObjectDetector(object):
   def __init__(self):
-    channel = grpc.insecure_channel(HOST + ':' + PORT)
+    channel = grpc.insecure_channel(OD_HOST + ':' + OD_PORT)
     self.stub = object_detect_pb2_grpc.DetectStub(channel)
 
   def getObjects(self, file):
