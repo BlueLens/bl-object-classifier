@@ -131,33 +131,37 @@ def object_detect(product, image_path):
   im.save(tmp_img)
 
   detect_time = time.time()
-  objects = obj_detector.getObjects(tmp_img)
   elapsed_detect_time = time.time() - detect_time
   log.info('object detection time: ' + str(elapsed_detect_time))
-  for obj in objects:
-    log.info(obj.class_name + ':' + str(obj.score))
-    left = obj.location.left
-    right = obj.location.right
-    top = obj.location.top
-    bottom = obj.location.bottom
-    area = (left, top, left + abs(left-right), top + abs(bottom-top))
-    obj_img = im.crop(area)
-    size = OBJECT_IMAGE_WIDTH, OBJECT_IMAGE_HEITH
-    obj_img.thumbnail(size, Image.ANTIALIAS)
+  try:
+    objects = obj_detector.getObjects(tmp_img)
+    for obj in objects:
+      log.info(obj.class_name + ':' + str(obj.score))
+      left = obj.location.left
+      right = obj.location.right
+      top = obj.location.top
+      bottom = obj.location.bottom
+      area = (left, top, left + abs(left-right), top + abs(bottom-top))
+      obj_img = im.crop(area)
+      size = OBJECT_IMAGE_WIDTH, OBJECT_IMAGE_HEITH
+      obj_img.thumbnail(size, Image.ANTIALIAS)
 
-    object = Object()
-    object.product_id = product['id']
-    object.storage = 's3'
-    object.bucket = AWS_OBJ_IMAGE_BUCKET
-    object.class_code = obj.class_code
-    id = save_object_to_db(object)
+      object = Object()
+      object.product_id = product['id']
+      object.storage = 's3'
+      object.bucket = AWS_OBJ_IMAGE_BUCKET
+      object.class_code = obj.class_code
+      id = save_object_to_db(object)
 
-    object.name = id
-    tmp_obj_img = id + '.jpg'
-    obj_img.save(tmp_obj_img)
-    save_to_storage(object)
-    push_object_to_queue(object)
-    # obj_img.show()
+      object.name = id
+      tmp_obj_img = id + '.jpg'
+      obj_img.save(tmp_obj_img)
+      save_to_storage(object)
+      push_object_to_queue(object)
+      # obj_img.show()
+  except Exception as e:
+    log.error(str(e))
+    return
   elapsed_time = time.time() - start_time
   log.info('total detection time: ' + str(elapsed_time))
   log.info('object_detect:done')
