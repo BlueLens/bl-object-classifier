@@ -193,6 +193,7 @@ crashlytics-build.properties
 fabric.properties
 BlueLens-d8117bd9e6b1.json
 kubernetes/config.yaml
+kubernetes/config-dev.yaml
 img.jpg
 obj.jpg
 tmp.jpg

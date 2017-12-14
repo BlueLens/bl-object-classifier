@@ -6,6 +6,7 @@ from threading import Timer
 from PIL import Image
 import time
 import urllib.request
+from collections import Counter
 import pickle
 from bluelens_spawning_pool import spawning_pool
 from detect.object_detect import ObjectDetector
@@ -29,13 +30,16 @@ OBJECT_IMAGE_WIDTH = 300
 OBJECT_IMAGE_HEITH = 300
 MOBILE_FULL_WIDTH = 343
 MOBILE_THUMBNAIL_WIDTH = 163
-HEALTH_CHECK_TIME = 60
+HEALTH_CHECK_TIME = 300
+
+CLASS_NUM = 3
 TMP_MOBILE_IMG = 'tmp_mobile_full.jpg'
 TMP_MOBILE_THUMB_IMG = 'tmp_mobile_thumb.jpg'
 
 SPAWN_ID = os.environ['SPAWN_ID']
 REDIS_SERVER = os.environ['REDIS_SERVER']
 REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
+RELEASE_MODE = os.environ['RELEASE_MODE']
 AWS_ACCESS_KEY = os.environ['AWS_ACCESS_KEY'].replace('"', '')
 AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY'].replace('"', '')
 
@@ -60,59 +64,46 @@ obj_detector = ObjectDetector()
 
 def analyze_product(p_data):
   log.info('analyze_product')
-  product = pickle.loads(p_data)
-  analyze_image(product)
+  p_dict = pickle.loads(p_data)
 
-def decide_class(product):
-  product_api.update_product(product)
+  save_main_image_as_object(p_dict)
+  class_code = analyze_class(p_dict)
+  # color = analyze_color(p_dict)
 
-def make_mobile_image(image_name, type, image_path):
-
-  if type == 'full':
-    basewidth = MOBILE_FULL_WIDTH
-  else:
-    basewidth = MOBILE_THUMBNAIL_WIDTH
-
-  f = urllib.request.urlopen(image_path)
-  im = Image.open(f).convert('RGB')
-  wpercent = (basewidth / float(im.size[0]))
-  hsize = int((float(im.size[1]) * float(wpercent)))
-  im = im.resize((basewidth, hsize), Image.ANTIALIAS)
-  im.save(TMP_MOBILE_IMG)
-  file_url = save_mobile_image_to_storage(image_name, type, TMP_MOBILE_IMG)
-  return file_url
-
-def make_mobile_images(product_dic):
-  full_image = make_mobile_image(product_dic['id'], 'full', product_dic['main_image'])
-  thumb_image = make_mobile_image(product_dic['id'], 'thumb', product_dic['main_image'])
   product = Product()
-  product.id = product_dic['id']
-  product.main_image_mobile_full = full_image
-  product.main_image_mobile_thumb = thumb_image
+  product.id = p_dict['id']
+  product.class_code = class_code
+  product.is_indexed = True
   update_product_to_db(product)
 
-  product_dic['main_image_mobile_full'] = full_image
-  product_dic['main_image_mobile_thumb'] = thumb_image
-  rconn.hset(REDIS_PRODUCT_HASH, product.id, pickle.dumps(product_dic))
+def analyze_color(product):
+  log.debug('analyze_color')
+  color = ''
+  return color
 
-def save_mobile_image_to_storage(name, path, image_file):
-  log.debug('save_mobile_image_to_storage')
-  key = os.path.join('mobile', path, name + '.jpg')
-  is_public = True
-  file_url = storage.upload_file_to_bucket(AWS_MOBILE_IMAGE_BUCKET, image_file, key, is_public=is_public)
-  log.info(file_url)
-  return file_url
+def analyze_category(product):
+  log.debug('analyze_category')
+  category = 1
+  return category
 
-def analyze_image(product):
+def analyze_class(product):
   log.info('analyze_image')
   images = []
 
-  # make_mobile_images(product)
-
   images.append(product['main_image_mobile_full'])
   images.extend(product['sub_images_mobile'])
+
+  classes = []
   for image in images:
-    object_detect(product, image)
+    class_code = object_detect(product, image)
+    classes.append(class_code)
+
+  c = Counter(classes)
+  k = c.most_common()
+  # final_class = k[0][0]
+  final_class = ''
+  log.debug('analyze_class: ' + final_class)
+  return final_class
 
 def object_detect(product, image_path):
   log.info('object_detect:start')
@@ -125,14 +116,13 @@ def object_detect(product, image_path):
     log.error(str(e))
     return
   im = Image.open(f).convert('RGB')
-  # size = 600, 600
-  # im.thumbnail(size, Image.ANTIALIAS)
   tmp_img = product['id'] + '.jpg'
   im.save(tmp_img)
 
   detect_time = time.time()
   elapsed_detect_time = time.time() - detect_time
   log.info('object detection time: ' + str(elapsed_detect_time))
+  classes = []
   try:
     objects = obj_detector.getObjects(tmp_img)
     for obj in objects:
@@ -151,6 +141,7 @@ def object_detect(product, image_path):
       object.storage = 's3'
       object.bucket = AWS_OBJ_IMAGE_BUCKET
       object.class_code = obj.class_code
+      classes.append(obj.class_code)
       id = save_object_to_db(object)
 
       object.name = id
@@ -162,14 +153,20 @@ def object_detect(product, image_path):
   except Exception as e:
     log.error(str(e))
     return
-  elapsed_time = time.time() - start_time
-  log.info('total detection time: ' + str(elapsed_time))
-  log.info('object_detect:done')
 
-def save_main_image_as_object(product, image_path):
+  c = Counter(classes)
+  k = c.most_common()
+  # final_class = k[0][0]
+  final_class = ''
+  elapsed_time = time.time() - start_time
+  log.debug('Decided class_code:' + final_class)
+  log.info('total object_detection time: ' + str(elapsed_time))
+  return final_class
+
+def save_main_image_as_object(product):
   log.info('save_main_image_as_object')
   try:
-    f = urllib.request.urlopen(image_path)
+    f = urllib.request.urlopen(product['main_image'])
   except Exception as e:
     log.error(str(e))
     return
@@ -206,7 +203,7 @@ def save_object_to_db(obj):
 def update_product_to_db(product):
   log.debug('update_product_to_db')
   try:
-    api_response = product_api.update_product(product)
+    api_response = product_api.update_product_by_id(product.id, product)
     log.debug(api_response)
   except ApiException as e:
     log.warn("Exception when calling ProductApi->update_product: %s\n" % e)
@@ -224,7 +221,7 @@ def exit():
   log.info('exit: ' + SPAWN_ID)
 
   data = {}
-  data['namespace'] = 'index'
+  data['namespace'] = RELEASE_MODE
   data['id'] = SPAWN_ID
   spawn = spawning_pool.SpawningPool()
   spawn.setServerUrl(REDIS_SERVER)
@@ -234,13 +231,13 @@ def exit():
 def save_to_storage(obj):
   log.debug('save_to_storage')
   file = obj.name + '.jpg'
-  key = os.path.join(obj.class_code, obj.name + '.jpg')
+  key = os.path.join(RELEASE_MODE, obj.class_code, obj.name + '.jpg')
   is_public = True
   storage.upload_file_to_bucket(AWS_OBJ_IMAGE_BUCKET, file, key, is_public=is_public)
   log.debug('save_to_storage done')
 
 def dispatch_job(rconn):
-  log.info('Start dispatch_detect_job')
+  log.info('Start dispatch_job')
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   while True:
     key, value = rconn.blpop([REDIS_PRODUCT_CLASSIFY_QUEUE])

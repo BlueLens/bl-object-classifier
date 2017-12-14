@@ -2,7 +2,7 @@
 
 export ORG="bluelens"
 export IMAGE="bl-classifier"
-export TAG='latest'
+export TAG='dev'
 
 docker login
 
