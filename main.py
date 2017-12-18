@@ -3,8 +3,10 @@ from __future__ import print_function
 import os
 from multiprocessing import Process
 from threading import Timer
+
 from PIL import Image
 import time
+import numpy as np
 import uuid
 import urllib.request
 from collections import Counter
@@ -86,7 +88,8 @@ def save_objects_to_db(product_id, class_code, objects):
     object['bucket'] = AWS_OBJ_IMAGE_BUCKET
     object['class_code'] = class_code
     object['name'] = obj['name']
-    object['feature'] = obj['feature']
+    feature = np.fromstring(obj['feature'], dtype=np.float32)
+    object['feature'] = feature.tolist()
 
     save_to_storage(object)
     save_object_to_db(object)
