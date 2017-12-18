@@ -11,16 +11,12 @@ from collections import Counter
 import pickle
 from bluelens_spawning_pool import spawning_pool
 from detect.object_detect import ObjectDetector
-from stylelens_product import Product
-from stylelens_product import ProductApi
-from stylelens_product.rest import ApiException
 from stylelens_object.objects import Objects
+from stylelens_image.images import Images
 from util import s3
 import redis
 
 from bluelens_log import Logging
-
-
 
 AWS_OBJ_IMAGE_BUCKET = 'bluelens-style-object'
 AWS_MOBILE_IMAGE_BUCKET = 'bluelens-style-mainimage'
@@ -50,44 +46,76 @@ options = {
   'REDIS_PASSWORD': REDIS_PASSWORD
 }
 log = Logging(options, tag='bl-object-classifier')
-product_api = ProductApi()
 rconn = redis.StrictRedis(REDIS_SERVER, port=6379, password=REDIS_PASSWORD)
 
 storage = s3.S3(AWS_ACCESS_KEY, AWS_SECRET_ACCESS_KEY)
 
 heart_bit = True
 object_api = None
+image_api = None
 
 def analyze_product(p_data):
   log.info('analyze_product')
   p_dict = pickle.loads(p_data)
 
   save_main_image_as_object(p_dict)
-  class_code, object_names = analyze_class(p_dict)
-  save_objects_to_db(p_dict['id'], class_code, object_names)
+  main_class_code, main_objects = analyze_class([].append(p_dict['main_image_mobile_full']))
+  save_image_to_db(p_dict, main_class_code, main_objects)
+
+  sub_class_code, sub_objects = analyze_class(p_dict['sub_images_mobile'])
+
+  objects = []
+  objects.extend(main_objects)
+  objects.extend(sub_objects)
+
+  save_objects = []
+  for obj in objects:
+    if obj['class_code'] == main_class_code:
+      save_objects.append(obj)
+
+  save_objects_to_db(p_dict['id'], main_class_code, save_objects)
+
   # color = analyze_color(p_dict)
 
-  product = Product()
-  product.id = p_dict['id']
-  product.class_code = class_code
-  product.is_indexed = True
-  update_product_to_db(product)
+def save_objects_to_db(product_id, class_code, objects):
 
-def save_objects_to_db(product_id, class_code, object_names):
-
-  for name in object_names:
+  for obj in objects:
     object = {}
     object['product_id'] = product_id
     object['storage'] = 's3'
     object['bucket'] = AWS_OBJ_IMAGE_BUCKET
     object['class_code'] = class_code
-    object['name'] = name
+    object['name'] = obj['name']
+    object['feature'] = obj['feature']
 
     save_to_storage(object)
     save_object_to_db(object)
 
     push_object_to_queue(object)
   # obj_img.show()
+
+def save_image_to_db(product, class_code, objects):
+  log.info('save_image_to_db')
+  image = {}
+  image['main_image_mobile_full'] = product['main_image_mobile_full']
+  image['main_image_mobile_thumb'] = product['main_image_mobile_thumb']
+  image['product_url'] = product['product_url']
+  image['price'] = product['price']
+  image['host_code'] = product['host_code']
+  image['host_name'] = product['host_name']
+  image['class_code'] = class_code
+  image['objects'] = objects
+
+  # image['color_code'] = ''
+  # image['sex_code'] = ''
+  # image['age_code'] = ''
+
+  global image_api
+  try:
+    api_response = image_api.add_image(image)
+    log.debug(api_response)
+  except Exception as e:
+    log.warn("Exception when calling add_image: %s\n" % e)
 
 def analyze_color(product):
   log.debug('analyze_color')
@@ -99,18 +127,15 @@ def analyze_category(product):
   category = 1
   return category
 
-def analyze_class(product):
-  log.info('analyze_image')
-  images = []
-
-  images.append(product['main_image_mobile_full'])
-  images.extend(product['sub_images_mobile'])
+def analyze_class(images):
+  log.info('analyze_class')
 
   classes = []
   objects = []
+
   for image in images:
     try:
-      class_code, detected_objects = object_detect(product, image)
+      class_code, detected_objects = object_detect(image)
       if class_code is not None:
         classes.append(class_code)
         objects.extend(detected_objects)
@@ -118,32 +143,38 @@ def analyze_class(product):
       log.error(str(e))
 
   final_class = None
-  final_object_names = []
-  try:
-    c = Counter(classes)
-    k = c.most_common()
-    final_class = k[0][0]
-    log.debug('analyze_class: ' + final_class)
+  final_objects = []
+  if len(images) > 1:
+    try:
+      c = Counter(classes)
+      k = c.most_common()
+      final_class = k[0][0]
+      log.debug('analyze_class: ' + final_class)
+      for obj in objects:
+        if obj['class_code'] == final_class:
+          final_objects.append(obj)
+    except Exception as e:
+      print(e)
+  else:
+    score = 0.0
     for obj in objects:
-      if obj['class_code'] == final_class:
-        final_object_names.append(obj['name'])
-  except Exception as e:
-    print(e)
+      if obj['score'] > score:
+        score = obj['score']
+        final_class = obj['class_code']
 
-  return final_class, final_object_names
+  return final_class, final_objects
 
-def object_detect(product, image_path):
+def object_detect(image_path):
   log.info('object_detect:start')
   start_time = time.time()
   log.info(image_path)
-  log.debug('product id = ' + product['id'])
   try:
     f = urllib.request.urlopen(image_path)
   except Exception as e:
     log.error(str(e))
     return
   im = Image.open(f).convert('RGB')
-  tmp_img = product['id'] + '.jpg'
+  tmp_img = 'tmp.jpg'
   im.save(tmp_img)
 
   classes = []
@@ -169,6 +200,14 @@ def object_detect(product, image_path):
       image_obj = {}
       image_obj['class_code'] = obj.class_code
       image_obj['name'] = id
+      image_obj['score'] = obj.score
+      image_obj['feature'] = obj.feature
+      box = {}
+      box['left'] = left
+      box['right'] = right
+      box['top'] = top
+      box['bottom'] = bottom
+      image_obj['box'] = box
       detected_objects.append(image_obj)
 
   except Exception as e:
@@ -224,14 +263,6 @@ def save_object_to_db(obj):
   except Exception as e:
     log.warn("Exception when calling add_object: %s\n" % e)
 
-def update_product_to_db(product):
-  log.debug('update_product_to_db')
-  try:
-    api_response = product_api.update_product_by_id(product.id, product)
-    log.debug(api_response)
-  except ApiException as e:
-    log.warn("Exception when calling ProductApi->update_product: %s\n" % e)
-
 def check_health():
   global  heart_bit
   log.info('check_health: ' + str(heart_bit))
@@ -263,7 +294,9 @@ def save_to_storage(obj):
 
 def dispatch_job(rconn):
   global  object_api
+  global  image_api
   object_api = Objects()
+  image_api = Images()
   log.info('Start dispatch_job')
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   while True:
