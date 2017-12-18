@@ -5,17 +5,16 @@ from multiprocessing import Process
 from threading import Timer
 from PIL import Image
 import time
+import uuid
 import urllib.request
 from collections import Counter
 import pickle
 from bluelens_spawning_pool import spawning_pool
 from detect.object_detect import ObjectDetector
 from stylelens_product import Product
-from stylelens_product import Object
-# from stylelens_product import Image
 from stylelens_product import ProductApi
-from stylelens_product import ObjectApi
 from stylelens_product.rest import ApiException
+from stylelens_object.objects import Objects
 from util import s3
 import redis
 
@@ -28,8 +27,6 @@ AWS_MOBILE_IMAGE_BUCKET = 'bluelens-style-mainimage'
 
 OBJECT_IMAGE_WIDTH = 300
 OBJECT_IMAGE_HEITH = 300
-MOBILE_FULL_WIDTH = 343
-MOBILE_THUMBNAIL_WIDTH = 163
 HEALTH_CHECK_TIME = 300
 
 CLASS_NUM = 3
@@ -52,22 +49,22 @@ options = {
   'REDIS_SERVER': REDIS_SERVER,
   'REDIS_PASSWORD': REDIS_PASSWORD
 }
-log = Logging(options, tag='bl-classifier')
+log = Logging(options, tag='bl-object-classifier')
 product_api = ProductApi()
-object_api = ObjectApi()
 rconn = redis.StrictRedis(REDIS_SERVER, port=6379, password=REDIS_PASSWORD)
 
 storage = s3.S3(AWS_ACCESS_KEY, AWS_SECRET_ACCESS_KEY)
 
 heart_bit = True
-obj_detector = ObjectDetector()
+object_api = None
 
 def analyze_product(p_data):
   log.info('analyze_product')
   p_dict = pickle.loads(p_data)
 
   save_main_image_as_object(p_dict)
-  class_code = analyze_class(p_dict)
+  class_code, object_names = analyze_class(p_dict)
+  save_objects_to_db(p_dict['id'], class_code, object_names)
   # color = analyze_color(p_dict)
 
   product = Product()
@@ -75,6 +72,22 @@ def analyze_product(p_data):
   product.class_code = class_code
   product.is_indexed = True
   update_product_to_db(product)
+
+def save_objects_to_db(product_id, class_code, object_names):
+
+  for name in object_names:
+    object = {}
+    object['product_id'] = product_id
+    object['storage'] = 's3'
+    object['bucket'] = AWS_OBJ_IMAGE_BUCKET
+    object['class_code'] = class_code
+    object['name'] = name
+
+    save_to_storage(object)
+    save_object_to_db(object)
+
+    push_object_to_queue(object)
+  # obj_img.show()
 
 def analyze_color(product):
   log.debug('analyze_color')
@@ -94,16 +107,30 @@ def analyze_class(product):
   images.extend(product['sub_images_mobile'])
 
   classes = []
+  objects = []
   for image in images:
-    class_code = object_detect(product, image)
-    classes.append(class_code)
+    try:
+      class_code, detected_objects = object_detect(product, image)
+      if class_code is not None:
+        classes.append(class_code)
+        objects.extend(detected_objects)
+    except Exception as e:
+      log.error(str(e))
 
-  c = Counter(classes)
-  k = c.most_common()
-  # final_class = k[0][0]
-  final_class = ''
-  log.debug('analyze_class: ' + final_class)
-  return final_class
+  final_class = None
+  final_object_names = []
+  try:
+    c = Counter(classes)
+    k = c.most_common()
+    final_class = k[0][0]
+    log.debug('analyze_class: ' + final_class)
+    for obj in objects:
+      if obj['class_code'] == final_class:
+        final_object_names.append(obj['name'])
+  except Exception as e:
+    print(e)
+
+  return final_class, final_object_names
 
 def object_detect(product, image_path):
   log.info('object_detect:start')
@@ -119,11 +146,10 @@ def object_detect(product, image_path):
   tmp_img = product['id'] + '.jpg'
   im.save(tmp_img)
 
-  detect_time = time.time()
-  elapsed_detect_time = time.time() - detect_time
-  log.info('object detection time: ' + str(elapsed_detect_time))
   classes = []
+  detected_objects = []
   try:
+    obj_detector = ObjectDetector()
     objects = obj_detector.getObjects(tmp_img)
     for obj in objects:
       log.info(obj.class_name + ':' + str(obj.score))
@@ -136,32 +162,31 @@ def object_detect(product, image_path):
       size = OBJECT_IMAGE_WIDTH, OBJECT_IMAGE_HEITH
       obj_img.thumbnail(size, Image.ANTIALIAS)
 
-      object = Object()
-      object.product_id = product['id']
-      object.storage = 's3'
-      object.bucket = AWS_OBJ_IMAGE_BUCKET
-      object.class_code = obj.class_code
-      classes.append(obj.class_code)
-      id = save_object_to_db(object)
-
-      object.name = id
+      id = str(uuid.uuid4())
       tmp_obj_img = id + '.jpg'
       obj_img.save(tmp_obj_img)
-      save_to_storage(object)
-      push_object_to_queue(object)
-      # obj_img.show()
+      classes.append(obj.class_code)
+      image_obj = {}
+      image_obj['class_code'] = obj.class_code
+      image_obj['name'] = id
+      detected_objects.append(image_obj)
+
   except Exception as e:
     log.error(str(e))
     return
 
-  c = Counter(classes)
-  k = c.most_common()
-  # final_class = k[0][0]
-  final_class = ''
+  final_class = None
+  try:
+    c = Counter(classes)
+    k = c.most_common()
+    final_class = k[0][0]
+    print(final_class)
+    log.debug('Decided class_code:' + final_class)
+  except Exception as e:
+    log.warn(str(e))
   elapsed_time = time.time() - start_time
-  log.debug('Decided class_code:' + final_class)
   log.info('total object_detection time: ' + str(elapsed_time))
-  return final_class
+  return final_class, detected_objects
 
 def save_main_image_as_object(product):
   log.info('save_main_image_as_object')
@@ -174,31 +199,30 @@ def save_main_image_as_object(product):
   size = OBJECT_IMAGE_WIDTH, OBJECT_IMAGE_HEITH
   im.thumbnail(size, Image.ANTIALIAS)
 
-  object = Object()
-  object.product_id = product['id']
-  object.storage = 's3'
-  object.bucket = AWS_OBJ_IMAGE_BUCKET
-  object.class_code = '0'
-  id = save_object_to_db(object)
-
-  object.name = id
+  object = {}
+  object['product_id'] = product['id']
+  object['storage'] = 's3'
+  object['bucket'] = AWS_OBJ_IMAGE_BUCKET
+  object['class_code'] = '0'
+  id = str(uuid.uuid4())
+  object['name'] = id
   im.save(id + '.jpg')
   save_to_storage(object)
+  save_object_to_db(object)
   push_object_to_queue(object)
 
 def push_object_to_queue(obj):
   log.info('push_object_to_queue')
-  rconn.lpush(REDIS_OBJECT_INDEX_QUEUE, pickle.dumps(obj.to_dict(), protocol=2))
+  rconn.lpush(REDIS_OBJECT_INDEX_QUEUE, pickle.dumps(obj, protocol=2))
 
 def save_object_to_db(obj):
   log.info('save_object_to_db')
+  global object_api
   try:
     api_response = object_api.add_object(obj)
     log.debug(api_response)
-  except ApiException as e:
-    log.warn("Exception when calling ObjectApi->add_object: %s\n" % e)
-
-  return api_response.data.object_id
+  except Exception as e:
+    log.warn("Exception when calling add_object: %s\n" % e)
 
 def update_product_to_db(product):
   log.debug('update_product_to_db')
@@ -215,9 +239,9 @@ def check_health():
     heart_bit = False
     Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   else:
-    exit()
+    delete_pod()
 
-def exit():
+def delete_pod():
   log.info('exit: ' + SPAWN_ID)
 
   data = {}
@@ -230,13 +254,16 @@ def exit():
 
 def save_to_storage(obj):
   log.debug('save_to_storage')
-  file = obj.name + '.jpg'
-  key = os.path.join(RELEASE_MODE, obj.class_code, obj.name + '.jpg')
+  file = obj['name'] + '.jpg'
+  key = os.path.join(RELEASE_MODE, obj['class_code'], file)
   is_public = True
-  storage.upload_file_to_bucket(AWS_OBJ_IMAGE_BUCKET, file, key, is_public=is_public)
+  path = storage.upload_file_to_bucket(AWS_OBJ_IMAGE_BUCKET, file, key, is_public=is_public)
+  obj['image_url'] = path
   log.debug('save_to_storage done')
 
 def dispatch_job(rconn):
+  global  object_api
+  object_api = Objects()
   log.info('Start dispatch_job')
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   while True:
@@ -246,9 +273,9 @@ def dispatch_job(rconn):
     heart_bit = True
 
 if __name__ == '__main__':
-  log.info('Start bl-classifier')
+  log.info('Start bl-object-classifier')
   try:
     Process(target=dispatch_job, args=(rconn,)).start()
   except Exception as e:
     log.error(str(e))
-    exit()
+    delete_pod()
