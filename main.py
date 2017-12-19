@@ -31,6 +31,7 @@ CLASS_NUM = 3
 TMP_MOBILE_IMG = 'tmp_mobile_full.jpg'
 TMP_MOBILE_THUMB_IMG = 'tmp_mobile_thumb.jpg'
 
+
 SPAWN_ID = os.environ['SPAWN_ID']
 REDIS_SERVER = os.environ['REDIS_SERVER']
 REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
@@ -42,6 +43,8 @@ REDIS_PRODUCT_CLASSIFY_QUEUE = 'bl:product:classify:queue'
 REDIS_OBJECT_INDEX_QUEUE = 'bl:object:index:queue'
 REDIS_PRODUCT_HASH = 'bl:product:hash'
 REDIS_PRODUCT_IMAGE_PROCESS_QUEUE = 'bl:product:image:process:queue'
+REDIS_CRAWL_VERSION = 'bl:crawl:version'
+REDIS_CRAWL_VERSION_LATEST = 'latest'
 
 options = {
   'REDIS_SERVER': REDIS_SERVER,
@@ -55,6 +58,7 @@ storage = s3.S3(AWS_ACCESS_KEY, AWS_SECRET_ACCESS_KEY)
 heart_bit = True
 object_api = None
 image_api = None
+version_id = None
 
 def analyze_product(p_data):
   log.info('analyze_product')
@@ -79,7 +83,13 @@ def analyze_product(p_data):
 
   # color = analyze_color(p_dict)
 
+def get_latest_crawl_version():
+  value = rconn.hget(REDIS_CRAWL_VERSION, REDIS_CRAWL_VERSION_LATEST)
+  version_id = value.decode("utf-8")
+  return version_id
+
 def save_objects_to_db(product_id, class_code, objects):
+  global version_id
 
   for obj in objects:
     object = {}
@@ -88,6 +98,7 @@ def save_objects_to_db(product_id, class_code, objects):
     object['bucket'] = AWS_OBJ_IMAGE_BUCKET
     object['class_code'] = class_code
     object['name'] = obj['name']
+    object['version_id'] = version_id
     feature = np.fromstring(obj['feature'], dtype=np.float32)
     object['feature'] = feature.tolist()
 
@@ -98,6 +109,7 @@ def save_objects_to_db(product_id, class_code, objects):
   # obj_img.show()
 
 def save_image_to_db(product, class_code, objects):
+  global version_id
   log.info('save_image_to_db')
   image = {}
   image['main_image_mobile_full'] = product['main_image_mobile_full']
@@ -108,6 +120,7 @@ def save_image_to_db(product, class_code, objects):
   image['host_name'] = product['host_name']
   image['class_code'] = class_code
   image['objects'] = objects
+  image['version_id'] = version_id
 
   # image['color_code'] = ''
   # image['sex_code'] = ''
@@ -296,10 +309,13 @@ def save_to_storage(obj):
   log.debug('save_to_storage done')
 
 def dispatch_job(rconn):
-  global  object_api
-  global  image_api
+  global object_api
+  global image_api
+  global version_id
   object_api = Objects()
   image_api = Images()
+  version_id = get_latest_crawl_version()
+
   log.info('Start dispatch_job')
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   while True:
