@@ -108,8 +108,11 @@ def save_image_to_db(product, class_code, objects):
   global version_id
   log.info('save_image_to_db')
 
+  object_ids = []
   for obj in objects:
-    save_object_to_db(obj)
+    save_to_storage(obj)
+    object_id = save_object_to_db(obj)
+    object_ids.append(object_id)
 
   image = {}
   image['main_image_mobile_full'] = product['main_image_mobile_full']
@@ -120,7 +123,7 @@ def save_image_to_db(product, class_code, objects):
   image['host_name'] = product['host_name']
   image['product_no'] = product['product_no']
   image['class_code'] = class_code
-  image['objects'] = objects
+  image['objects'] = object_ids
   image['version_id'] = version_id
 
   # image['color_code'] = ''
@@ -168,7 +171,7 @@ def analyze_main_image(image):
   return final_class, objects
 
 def analyze_sub_images(images):
-  log.info('analyze_class')
+  log.info('analyze_sub_images')
 
   classes = []
   objects = []
@@ -298,10 +301,11 @@ def save_object_to_db(obj):
   log.info('save_object_to_db')
   global object_api
   try:
-    api_response = object_api.add_object(obj)
-    log.debug(api_response)
+    object_id = object_api.add_object(obj)
+    log.debug(object_id)
   except Exception as e:
     log.warn("Exception when calling add_object: %s\n" % e)
+  return object_id
 
 def check_health():
   global  heart_bit
