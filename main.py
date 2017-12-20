@@ -65,17 +65,13 @@ def analyze_product(p_data):
   p_dict = pickle.loads(p_data)
 
   save_main_image_as_object(p_dict)
-  main_class_code, main_objects = analyze_class([].append(p_dict['main_image_mobile_full']))
+  main_class_code, main_objects = analyze_main_image(p_dict['main_image_mobile_full'])
   save_image_to_db(p_dict, main_class_code, main_objects)
 
-  sub_class_code, sub_objects = analyze_class(p_dict['sub_images_mobile'])
-
-  objects = []
-  objects.extend(main_objects)
-  objects.extend(sub_objects)
+  sub_class_code, sub_objects = analyze_sub_images(p_dict['sub_images_mobile'])
 
   save_objects = []
-  for obj in objects:
+  for obj in sub_objects:
     if obj['class_code'] == main_class_code:
       save_objects.append(obj)
 
@@ -111,6 +107,10 @@ def save_objects_to_db(product_id, class_code, objects):
 def save_image_to_db(product, class_code, objects):
   global version_id
   log.info('save_image_to_db')
+
+  for obj in objects:
+    save_object_to_db(obj)
+
   image = {}
   image['main_image_mobile_full'] = product['main_image_mobile_full']
   image['main_image_mobile_thumb'] = product['main_image_mobile_thumb']
@@ -144,7 +144,30 @@ def analyze_category(product):
   category = 1
   return category
 
-def analyze_class(images):
+def analyze_main_image(image):
+  log.info('analyze_main_image')
+
+  classes = []
+  objects = []
+
+  try:
+    class_code, detected_objects = object_detect(image)
+    if class_code is not None:
+      classes.append(class_code)
+      objects.extend(detected_objects)
+  except Exception as e:
+    log.error(str(e))
+
+  final_class = None
+  score = 0.0
+  for obj in objects:
+    if obj['score'] > score:
+      score = obj['score']
+      final_class = obj['class_code']
+
+  return final_class, objects
+
+def analyze_sub_images(images):
   log.info('analyze_class')
 
   classes = []
