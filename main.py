@@ -118,6 +118,7 @@ def save_image_to_db(product, class_code, objects):
   image['price'] = product['price']
   image['host_code'] = product['host_code']
   image['host_name'] = product['host_name']
+  image['product_no'] = product['product_no']
   image['class_code'] = class_code
   image['objects'] = objects
   image['version_id'] = version_id
