@@ -105,8 +105,9 @@ def save_objects_to_db(product_id, class_code, objects):
     object['class_code'] = class_code
     object['name'] = obj['name']
     object['version_id'] = version_id
-    feature = np.fromstring(obj['feature'], dtype=np.float32)
-    object['feature'] = feature.tolist()
+    # feature = np.fromstring(obj['feature'], dtype=np.float32)
+    # object['feature'] = feature.tolist()
+    object['feature'] = obj['feature']
 
     save_to_storage(object)
     save_object_to_db(object)
