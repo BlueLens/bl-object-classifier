@@ -1,7 +1,6 @@
 from __future__ import print_function
 
 import os
-from multiprocessing import Process
 from threading import Timer
 
 from PIL import Image
@@ -13,6 +12,7 @@ from collections import Counter
 import pickle
 from bluelens_spawning_pool import spawning_pool
 from detect.object_detect import ObjectDetector
+from stylelens_product.products import Products
 from stylelens_object.objects import Objects
 from stylelens_image.images import Images
 from util import s3
@@ -26,6 +26,8 @@ AWS_MOBILE_IMAGE_BUCKET = 'bluelens-style-mainimage'
 OBJECT_IMAGE_WIDTH = 300
 OBJECT_IMAGE_HEITH = 300
 HEALTH_CHECK_TIME = 300
+
+MAX_CLASSIFY_NUM = 500
 
 CLASS_NUM = 3
 TMP_MOBILE_IMG = 'tmp_mobile_full.jpg'
@@ -56,33 +58,41 @@ rconn = redis.StrictRedis(REDIS_SERVER, port=6379, password=REDIS_PASSWORD)
 storage = s3.S3(AWS_ACCESS_KEY, AWS_SECRET_ACCESS_KEY)
 
 heart_bit = True
+product_api = None
 object_api = None
 image_api = None
 version_id = None
 
 def analyze_product(p_data):
   log.info('analyze_product')
-  p_dict = pickle.loads(p_data)
+  product = pickle.loads(p_data)
 
-  save_main_image_as_object(p_dict)
-  main_class_code, main_objects = analyze_main_image(p_dict['main_image_mobile_full'])
-  save_image_to_db(p_dict, main_class_code, main_objects)
+  save_main_image_as_object(product)
+  main_class_code, main_objects = analyze_main_image(product['main_image_mobile_full'])
+  save_image_to_db(product, main_class_code, main_objects)
 
-  sub_class_code, sub_objects = analyze_sub_images(p_dict['sub_images_mobile'])
+  sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
 
   save_objects = []
   for obj in sub_objects:
     if obj['class_code'] == main_class_code:
       save_objects.append(obj)
 
-  save_objects_to_db(p_dict['id'], main_class_code, save_objects)
+  save_objects_to_db(str(product['_id']), main_class_code, save_objects)
 
+  set_product_is_classified(product)
   # color = analyze_color(p_dict)
 
 def get_latest_crawl_version():
   value = rconn.hget(REDIS_CRAWL_VERSION, REDIS_CRAWL_VERSION_LATEST)
   version_id = value.decode("utf-8")
   return version_id
+
+def set_product_is_classified(product):
+  try:
+    product_api.update_product_by_id(str(product['_id']), product)
+  except Exception as e:
+    log.error(str(e))
 
 def save_objects_to_db(product_id, class_code, objects):
   global version_id
@@ -115,6 +125,7 @@ def save_image_to_db(product, class_code, objects):
     object_ids.append(object_id)
 
   image = {}
+  image['product_id'] = product['product_id']
   image['main_image_mobile_full'] = product['main_image_mobile_full']
   image['main_image_mobile_thumb'] = product['main_image_mobile_thumb']
   image['product_url'] = product['product_url']
@@ -258,14 +269,16 @@ def object_detect(image_path):
     return
 
   final_class = None
-  try:
-    c = Counter(classes)
-    k = c.most_common()
-    final_class = k[0][0]
-    print(final_class)
-    log.debug('Decided class_code:' + final_class)
-  except Exception as e:
-    log.warn(str(e))
+
+  if len(classes) > 0:
+    try:
+      c = Counter(classes)
+      k = c.most_common()
+      final_class = k[0][0]
+      print(final_class)
+      log.debug('Decided class_code:' + final_class)
+    except Exception as e:
+      log.warn(str(e))
   elapsed_time = time.time() - start_time
   log.info('total object_detection time: ' + str(elapsed_time))
   return final_class, detected_objects
@@ -282,7 +295,7 @@ def save_main_image_as_object(product):
   im.thumbnail(size, Image.ANTIALIAS)
 
   object = {}
-  object['product_id'] = product['id']
+  object['product_id'] = str(product['_id'])
   object['storage'] = 's3'
   object['bucket'] = AWS_OBJ_IMAGE_BUCKET
   object['class_code'] = '0'
@@ -337,25 +350,34 @@ def save_to_storage(obj):
   log.debug('save_to_storage done')
 
 def dispatch_job(rconn):
+  global product_api
   global object_api
   global image_api
   global version_id
+
+  product_api = Products()
   object_api = Objects()
   image_api = Images()
   version_id = get_latest_crawl_version()
 
   log.info('Start dispatch_job')
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
+  count = 0
   while True:
     key, value = rconn.blpop([REDIS_PRODUCT_CLASSIFY_QUEUE])
     analyze_product(value)
     global  heart_bit
     heart_bit = True
 
+    count = count + 1
+    if count > MAX_CLASSIFY_NUM:
+      delete_pod()
+
 if __name__ == '__main__':
-  log.info('Start bl-object-classifier')
+  log.info('Start bl-object-classifier:1')
   try:
-    Process(target=dispatch_job, args=(rconn,)).start()
+    # Process(target=dispatch_job, args=(rconn,)).start()
+    dispatch_job(rconn)
   except Exception as e:
     log.error(str(e))
     delete_pod()
