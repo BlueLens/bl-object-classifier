@@ -58,9 +58,10 @@ rconn = redis.StrictRedis(REDIS_SERVER, port=6379, password=REDIS_PASSWORD)
 storage = s3.S3(AWS_ACCESS_KEY, AWS_SECRET_ACCESS_KEY)
 
 heart_bit = True
-product_api = None
-object_api = None
-image_api = None
+
+product_api = Products()
+object_api = Objects()
+image_api = Images()
 version_id = None
 
 def analyze_product(p_data):
@@ -90,6 +91,7 @@ def get_latest_crawl_version():
 
 def set_product_is_classified(product):
   try:
+    product['is_classified'] = True
     product_api.update_product_by_id(str(product['_id']), product)
   except Exception as e:
     log.error(str(e))
@@ -116,8 +118,8 @@ def save_objects_to_db(product_id, class_code, objects):
   # obj_img.show()
 
 def save_image_to_db(product, class_code, objects):
-  global version_id
   log.info('save_image_to_db')
+  global version_id
 
   object_ids = []
   for obj in objects:
@@ -126,7 +128,7 @@ def save_image_to_db(product, class_code, objects):
     object_ids.append(object_id)
 
   image = {}
-  image['product_id'] = product['product_id']
+  image['product_id'] = str(product['_id'])
   image['main_image_mobile_full'] = product['main_image_mobile_full']
   image['main_image_mobile_thumb'] = product['main_image_mobile_thumb']
   image['product_url'] = product['product_url']
@@ -142,7 +144,6 @@ def save_image_to_db(product, class_code, objects):
   # image['sex_code'] = ''
   # image['age_code'] = ''
 
-  global image_api
   try:
     api_response = image_api.add_image(image)
     log.debug(api_response)
@@ -313,7 +314,6 @@ def push_object_to_queue(obj):
 
 def save_object_to_db(obj):
   log.info('save_object_to_db')
-  global object_api
   try:
     object_id = object_api.add_object(obj)
     log.debug(object_id)
@@ -351,21 +351,17 @@ def save_to_storage(obj):
   log.debug('save_to_storage done')
 
 def dispatch_job(rconn):
-  global product_api
-  global object_api
-  global image_api
   global version_id
-
-  product_api = Products()
-  object_api = Objects()
-  image_api = Images()
   version_id = get_latest_crawl_version()
 
   log.info('Start dispatch_job')
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   count = 0
   while True:
-    key, value = rconn.blpop([REDIS_PRODUCT_CLASSIFY_QUEUE])
+    keys = rconn.hkeys(REDIS_PRODUCT_CLASSIFY_QUEUE)
+
+    for key in keys:
+      value = rconn.hget(REDIS_PRODUCT_CLASSIFY_QUEUE, key)
     analyze_product(value)
     global  heart_bit
     heart_bit = True
@@ -375,9 +371,8 @@ def dispatch_job(rconn):
       delete_pod()
 
 if __name__ == '__main__':
-  log.info('Start bl-object-classifier:1')
+  log.info('Start bl-object-classifier:3')
   try:
-    # Process(target=dispatch_job, args=(rconn,)).start()
     dispatch_job(rconn)
   except Exception as e:
     log.error(str(e))
