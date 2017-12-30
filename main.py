@@ -5,7 +5,6 @@ from threading import Timer
 
 from PIL import Image
 import time
-import numpy as np
 import uuid
 import urllib.request
 from collections import Counter
@@ -41,7 +40,7 @@ RELEASE_MODE = os.environ['RELEASE_MODE']
 AWS_ACCESS_KEY = os.environ['AWS_ACCESS_KEY'].replace('"', '')
 AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY'].replace('"', '')
 
-REDIS_PRODUCT_CLASSIFY_QUEUE = 'bl:product:classify:queue'
+REDIS_PRODUCT_CLASSIFY_QUEUE = 'bl_product_classify_queue'
 REDIS_OBJECT_INDEX_QUEUE = 'bl:object:index:queue'
 REDIS_PRODUCT_HASH = 'bl:product:hash'
 REDIS_PRODUCT_IMAGE_PROCESS_QUEUE = 'bl:product:image:process:queue'
@@ -53,7 +52,7 @@ options = {
   'REDIS_PASSWORD': REDIS_PASSWORD
 }
 log = Logging(options, tag='bl-object-classifier')
-rconn = redis.StrictRedis(REDIS_SERVER, port=6379, password=REDIS_PASSWORD)
+rconn = redis.StrictRedis(REDIS_SERVER, decode_responses=False, port=6379, password=REDIS_PASSWORD)
 
 storage = s3.S3(AWS_ACCESS_KEY, AWS_SECRET_ACCESS_KEY)
 
@@ -86,8 +85,7 @@ def analyze_product(p_data):
 
 def get_latest_crawl_version():
   value = rconn.hget(REDIS_CRAWL_VERSION, REDIS_CRAWL_VERSION_LATEST)
-  version_id = value.decode("utf-8")
-  return version_id
+  return value.decode('utf-8')
 
 def set_product_is_classified(product):
   try:
@@ -361,8 +359,10 @@ def dispatch_job(rconn):
     keys = rconn.hkeys(REDIS_PRODUCT_CLASSIFY_QUEUE)
 
     for key in keys:
-      value = rconn.hget(REDIS_PRODUCT_CLASSIFY_QUEUE, key)
-    analyze_product(value)
+      product = rconn.hget(REDIS_PRODUCT_CLASSIFY_QUEUE, key)
+      if product is not None:
+        analyze_product(product)
+        rconn.hdel(REDIS_PRODUCT_CLASSIFY_QUEUE, key.decode('utf-8'))
     global  heart_bit
     heart_bit = True
 
