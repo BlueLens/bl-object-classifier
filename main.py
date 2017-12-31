@@ -26,7 +26,7 @@ OBJECT_IMAGE_WIDTH = 300
 OBJECT_IMAGE_HEITH = 300
 HEALTH_CHECK_TIME = 300
 
-MAX_CLASSIFY_NUM = 500
+MAX_CLASSIFY_NUM = 1000
 
 CLASS_NUM = 3
 TMP_MOBILE_IMG = 'tmp_mobile_full.jpg'
@@ -69,7 +69,6 @@ def analyze_product(p_data):
 
   save_main_image_as_object(product)
   main_class_code, main_objects = analyze_main_image(product['main_image_mobile_full'])
-  save_image_to_db(product, main_class_code, main_objects)
 
   sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
 
@@ -80,6 +79,7 @@ def analyze_product(p_data):
 
   save_objects_to_db(str(product['_id']), main_class_code, save_objects)
 
+  save_image_to_db(product, main_class_code, main_objects)
   set_product_is_classified(product)
   # color = analyze_color(p_dict)
 
@@ -122,6 +122,10 @@ def save_image_to_db(product, class_code, objects):
   object_ids = []
   for obj in objects:
     save_to_storage(obj)
+    obj['product_id'] = str(product['_id'])
+    obj['version_id'] = version_id
+    obj['storage'] = 's3'
+    obj['bucket'] = AWS_OBJ_IMAGE_BUCKET
     object_id = save_object_to_db(obj)
     object_ids.append(object_id)
 
@@ -285,6 +289,7 @@ def object_detect(image_path):
 
 def save_main_image_as_object(product):
   log.info('save_main_image_as_object')
+  global version_id
   try:
     f = urllib.request.urlopen(product['main_image'])
   except Exception as e:
@@ -299,6 +304,7 @@ def save_main_image_as_object(product):
   object['storage'] = 's3'
   object['bucket'] = AWS_OBJ_IMAGE_BUCKET
   object['class_code'] = '0'
+  object['version_id'] = version_id
   id = str(uuid.uuid4())
   object['name'] = id
   im.save(id + '.jpg')
@@ -326,7 +332,8 @@ def check_health():
     heart_bit = False
     Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   else:
-    delete_pod()
+    log.debug('Need to delete_pod')
+    #delete_pod()
 
 def delete_pod():
   log.info('exit: ' + SPAWN_ID)
