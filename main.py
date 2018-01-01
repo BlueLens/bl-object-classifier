@@ -22,11 +22,9 @@ from bluelens_log import Logging
 AWS_OBJ_IMAGE_BUCKET = 'bluelens-style-object'
 AWS_MOBILE_IMAGE_BUCKET = 'bluelens-style-mainimage'
 
-OBJECT_IMAGE_WIDTH = 300
-OBJECT_IMAGE_HEITH = 300
+OBJECT_IMAGE_WIDTH = 380
+OBJECT_IMAGE_HEITH = 380
 HEALTH_CHECK_TIME = 300
-
-MAX_CLASSIFY_NUM = 1000
 
 CLASS_NUM = 3
 TMP_MOBILE_IMG = 'tmp_mobile_full.jpg'
@@ -39,6 +37,8 @@ REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
 RELEASE_MODE = os.environ['RELEASE_MODE']
 AWS_ACCESS_KEY = os.environ['AWS_ACCESS_KEY'].replace('"', '')
 AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY'].replace('"', '')
+
+MAX_PROCESS_NUM = int(os.environ['MAX_PROCESS_NUM'])
 
 REDIS_PRODUCT_CLASSIFY_QUEUE = 'bl_product_classify_queue'
 REDIS_OBJECT_INDEX_QUEUE = 'bl:object:index:queue'
@@ -207,7 +207,7 @@ def analyze_sub_images(images):
       c = Counter(classes)
       k = c.most_common()
       final_class = k[0][0]
-      log.debug('analyze_class: ' + final_class)
+      #log.debug('analyze_class: ' + final_class)
       for obj in objects:
         if obj['class_code'] == final_class:
           final_objects.append(obj)
@@ -225,7 +225,7 @@ def analyze_sub_images(images):
 def object_detect(image_path):
   log.info('object_detect:start')
   start_time = time.time()
-  log.info(image_path)
+  #log.info(image_path)
   try:
     f = urllib.request.urlopen(image_path)
   except Exception as e:
@@ -241,7 +241,7 @@ def object_detect(image_path):
     obj_detector = ObjectDetector()
     objects = obj_detector.getObjects(tmp_img)
     for obj in objects:
-      log.info(obj.class_name + ':' + str(obj.score))
+      #log.info(obj.class_name + ':' + str(obj.score))
       left = obj.location.left
       right = obj.location.right
       top = obj.location.top
@@ -280,7 +280,7 @@ def object_detect(image_path):
       k = c.most_common()
       final_class = k[0][0]
       print(final_class)
-      log.debug('Decided class_code:' + final_class)
+      #log.debug('Decided class_code:' + final_class)
     except Exception as e:
       log.warn(str(e))
   elapsed_time = time.time() - start_time
@@ -340,7 +340,8 @@ def delete_pod():
 
   data = {}
   data['namespace'] = RELEASE_MODE
-  data['id'] = SPAWN_ID
+  data['key'] = 'SPAWN_ID'
+  data['value'] = SPAWN_ID
   spawn = spawning_pool.SpawningPool()
   spawn.setServerUrl(REDIS_SERVER)
   spawn.setServerPassword(REDIS_PASSWORD)
@@ -355,7 +356,7 @@ def save_to_storage(obj):
   obj['image_url'] = path
   log.debug('save_to_storage done')
 
-def dispatch_job(rconn):
+def start(rconn):
   global version_id
   version_id = get_latest_crawl_version()
 
@@ -363,24 +364,20 @@ def dispatch_job(rconn):
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   count = 0
   while True:
-    keys = rconn.hkeys(REDIS_PRODUCT_CLASSIFY_QUEUE)
-
-    for key in keys:
-      product = rconn.hget(REDIS_PRODUCT_CLASSIFY_QUEUE, key)
-      if product is not None:
-        analyze_product(product)
-        rconn.hdel(REDIS_PRODUCT_CLASSIFY_QUEUE, key.decode('utf-8'))
+    key, value = rconn.blpop([REDIS_PRODUCT_CLASSIFY_QUEUE])
+    if value is not None:
+      analyze_product(value)
     global  heart_bit
     heart_bit = True
 
     count = count + 1
-    if count > MAX_CLASSIFY_NUM:
+    if count > MAX_PROCESS_NUM:
       delete_pod()
 
 if __name__ == '__main__':
-  log.info('Start bl-object-classifier:3')
   try:
-    dispatch_job(rconn)
+    log.info('Start bl-object-classifier:3')
+    start(rconn)
   except Exception as e:
     log.error(str(e))
     delete_pod()
