@@ -26,11 +26,6 @@ OBJECT_IMAGE_WIDTH = 380
 OBJECT_IMAGE_HEITH = 380
 HEALTH_CHECK_TIME = 300
 
-CLASS_NUM = 3
-TMP_MOBILE_IMG = 'tmp_mobile_full.jpg'
-TMP_MOBILE_THUMB_IMG = 'tmp_mobile_thumb.jpg'
-
-
 SPAWN_ID = os.environ['SPAWN_ID']
 REDIS_SERVER = os.environ['REDIS_SERVER']
 REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
@@ -333,7 +328,7 @@ def check_health():
     Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   else:
     log.debug('Need to delete_pod')
-    #delete_pod()
+    delete_pod()
 
 def delete_pod():
   log.info('exit: ' + SPAWN_ID)
@@ -361,6 +356,7 @@ def start(rconn):
   version_id = get_latest_crawl_version()
 
   log.info('Start dispatch_job')
+
   Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   count = 0
   while True:
