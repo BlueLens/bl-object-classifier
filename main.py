@@ -24,7 +24,7 @@ AWS_MOBILE_IMAGE_BUCKET = 'bluelens-style-mainimage'
 
 OBJECT_IMAGE_WIDTH = 380
 OBJECT_IMAGE_HEITH = 380
-HEALTH_CHECK_TIME = 300
+HEALTH_CHECK_TIME = 60*20
 
 SPAWN_ID = os.environ['SPAWN_ID']
 REDIS_SERVER = os.environ['REDIS_SERVER']
@@ -72,9 +72,9 @@ def analyze_product(p_data):
     if obj['class_code'] == main_class_code:
       save_objects.append(obj)
 
-  save_objects_to_db(str(product['_id']), main_class_code, save_objects)
+  image_id = save_image_to_db(product, main_class_code, main_objects)
+  save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
 
-  save_image_to_db(product, main_class_code, main_objects)
   set_product_is_classified(product)
   # color = analyze_color(p_dict)
 
@@ -89,11 +89,12 @@ def set_product_is_classified(product):
   except Exception as e:
     log.error(str(e))
 
-def save_objects_to_db(product_id, class_code, objects):
+def save_objects_to_db(product_id, image_id, class_code, objects):
   global version_id
 
   for obj in objects:
     object = {}
+    object['image_id'] = image_id
     object['product_id'] = product_id
     object['storage'] = 's3'
     object['bucket'] = AWS_OBJ_IMAGE_BUCKET
@@ -143,9 +144,15 @@ def save_image_to_db(product, class_code, objects):
 
   try:
     api_response = image_api.add_image(image)
+    if api_response is not None:
+      if 'upserted' in api_response:
+        image_id = str(api_response['upserted'])
+        return image_id
     log.debug(api_response)
   except Exception as e:
     log.warn("Exception when calling add_image: %s\n" % e)
+
+  return None
 
 def analyze_color(product):
   log.debug('analyze_color')
@@ -299,6 +306,7 @@ def save_main_image_as_object(product):
   object['storage'] = 's3'
   object['bucket'] = AWS_OBJ_IMAGE_BUCKET
   object['class_code'] = '0'
+  object['is_main'] = True
   object['version_id'] = version_id
   id = str(uuid.uuid4())
   object['name'] = id
@@ -327,7 +335,6 @@ def check_health():
     heart_bit = False
     Timer(HEALTH_CHECK_TIME, check_health, ()).start()
   else:
-    log.debug('Need to delete_pod')
     delete_pod()
 
 def delete_pod():
