@@ -62,7 +62,6 @@ def analyze_product(p_data):
   log.info('analyze_product')
   product = pickle.loads(p_data)
 
-  save_main_image_as_object(product)
   main_class_code, main_objects = analyze_main_image(product['main_image_mobile_full'])
 
   sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
@@ -73,6 +72,8 @@ def analyze_product(p_data):
       save_objects.append(obj)
 
   image_id = save_image_to_db(product, main_class_code, main_objects)
+
+  save_main_image_as_object(product, image_id)
   save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
 
   set_product_is_classified(product)
@@ -98,6 +99,7 @@ def save_objects_to_db(product_id, image_id, class_code, objects):
     object['product_id'] = product_id
     object['storage'] = 's3'
     object['bucket'] = AWS_OBJ_IMAGE_BUCKET
+    object['ia_main'] = False
     object['class_code'] = class_code
     object['name'] = obj['name']
     object['version_id'] = version_id
@@ -289,7 +291,7 @@ def object_detect(image_path):
   log.info('total object_detection time: ' + str(elapsed_time))
   return final_class, detected_objects
 
-def save_main_image_as_object(product):
+def save_main_image_as_object(product, image_id):
   log.info('save_main_image_as_object')
   global version_id
   try:
@@ -307,6 +309,7 @@ def save_main_image_as_object(product):
   object['bucket'] = AWS_OBJ_IMAGE_BUCKET
   object['class_code'] = '0'
   object['is_main'] = True
+  object['image_id'] = image_id
   object['version_id'] = version_id
   id = str(uuid.uuid4())
   object['name'] = id
