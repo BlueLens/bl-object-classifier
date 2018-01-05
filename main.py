@@ -117,7 +117,7 @@ def save_objects_to_db(product_id, image_id, class_code, objects):
     save_to_storage(object)
     save_object_to_db(object)
 
-    push_object_to_queue(object)
+    # push_object_to_queue(object)
   # obj_img.show()
 
 def update_image_id_to_object_db(object_ids, image_id):
@@ -343,7 +343,7 @@ def save_main_image_as_object(product, image_id):
   im.save(id + '.jpg')
   save_to_storage(object)
   save_object_to_db(object)
-  push_object_to_queue(object)
+  # push_object_to_queue(object)
 
 def push_object_to_queue(obj):
   log.info('push_object_to_queue')
