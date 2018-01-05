@@ -62,7 +62,12 @@ def analyze_product(p_data):
   log.info('analyze_product')
   product = pickle.loads(p_data)
 
-  main_class_code, main_objects = analyze_main_image(product['main_image_mobile_full'])
+  try:
+    main_class_code, main_objects = analyze_main_image(product)
+  except Exception as e:
+    log.error('analyze_product:' + str(e))
+    delete_product_from_db(str(product['_id']))
+    return
 
   sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
 
@@ -71,7 +76,9 @@ def analyze_product(p_data):
     if obj['class_code'] == main_class_code:
       save_objects.append(obj)
 
-  image_id = save_image_to_db(product, main_class_code, main_objects)
+  image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
+
+  update_image_id_to_object_db(obj_ids, image_id)
 
   save_main_image_as_object(product, image_id)
   save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
@@ -99,7 +106,7 @@ def save_objects_to_db(product_id, image_id, class_code, objects):
     object['product_id'] = product_id
     object['storage'] = 's3'
     object['bucket'] = AWS_OBJ_IMAGE_BUCKET
-    object['ia_main'] = False
+    object['is_main'] = False
     object['class_code'] = class_code
     object['name'] = obj['name']
     object['version_id'] = version_id
@@ -113,6 +120,16 @@ def save_objects_to_db(product_id, image_id, class_code, objects):
     push_object_to_queue(object)
   # obj_img.show()
 
+def update_image_id_to_object_db(object_ids, image_id):
+  log.info('update_image_id_to_object_db')
+  try:
+    for id in object_ids:
+      obj = {}
+      obj['image_id'] = image_id
+      object_api.update_object_by_id(id, obj)
+  except Exception as e:
+    log.warn("Exception when calling update_object_by_id: %s\n" % e)
+
 def save_image_to_db(product, class_code, objects):
   log.info('save_image_to_db')
   global version_id
@@ -123,6 +140,7 @@ def save_image_to_db(product, class_code, objects):
     obj['product_id'] = str(product['_id'])
     obj['version_id'] = version_id
     obj['storage'] = 's3'
+    obj['is_main'] = False
     obj['bucket'] = AWS_OBJ_IMAGE_BUCKET
     object_id = save_object_to_db(obj)
     object_ids.append(object_id)
@@ -149,7 +167,7 @@ def save_image_to_db(product, class_code, objects):
     if api_response is not None:
       if 'upserted' in api_response:
         image_id = str(api_response['upserted'])
-        return image_id
+        return image_id, object_ids
     log.debug(api_response)
   except Exception as e:
     log.warn("Exception when calling add_image: %s\n" % e)
@@ -166,9 +184,10 @@ def analyze_category(product):
   category = 1
   return category
 
-def analyze_main_image(image):
+def analyze_main_image(product):
   log.info('analyze_main_image')
 
+  image = product['main_image_mobile_full']
   classes = []
   objects = []
 
@@ -178,7 +197,8 @@ def analyze_main_image(image):
       classes.append(class_code)
       objects.extend(detected_objects)
   except Exception as e:
-    log.error(str(e))
+    log.error('analyze_main_image2:' + str(e))
+    return
 
   final_class = None
   score = 0.0
@@ -198,11 +218,12 @@ def analyze_sub_images(images):
   for image in images:
     try:
       class_code, detected_objects = object_detect(image)
-      if class_code is not None:
+      if class_code != None and detected_objects != None:
         classes.append(class_code)
         objects.extend(detected_objects)
     except Exception as e:
-      log.error(str(e))
+      log.error('analyze_sub_images: ' + str(e))
+      return
 
   final_class = None
   final_objects = []
@@ -216,7 +237,7 @@ def analyze_sub_images(images):
         if obj['class_code'] == final_class:
           final_objects.append(obj)
     except Exception as e:
-      print(e)
+      log.error('analyze_sub_images2: ' + str(e))
   else:
     score = 0.0
     for obj in objects:
@@ -233,7 +254,7 @@ def object_detect(image_path):
   try:
     f = urllib.request.urlopen(image_path)
   except Exception as e:
-    log.error(str(e))
+    log.error('object_detect urlopen: ' + str(e))
     return
   im = Image.open(f).convert('RGB')
   tmp_img = 'tmp.jpg'
@@ -273,7 +294,7 @@ def object_detect(image_path):
       detected_objects.append(image_obj)
 
   except Exception as e:
-    log.error(str(e))
+    log.error('object_detect:' + str(e))
     return
 
   final_class = None
@@ -290,6 +311,12 @@ def object_detect(image_path):
   elapsed_time = time.time() - start_time
   log.info('total object_detection time: ' + str(elapsed_time))
   return final_class, detected_objects
+
+def delete_product_from_db(product_id):
+  try:
+    product_api.delete_product(product_id)
+  except Exception as e:
+    log.error(str(e))
 
 def save_main_image_as_object(product, image_id):
   log.info('save_main_image_as_object')
@@ -376,14 +403,14 @@ def start(rconn):
     global  heart_bit
     heart_bit = True
 
-    count = count + 1
-    if count > MAX_PROCESS_NUM:
-      delete_pod()
+    # count = count + 1
+    # if count > MAX_PROCESS_NUM:
+    #   delete_pod()
 
 if __name__ == '__main__':
   try:
     log.info('Start bl-object-classifier:3')
     start(rconn)
   except Exception as e:
-    log.error(str(e))
+    log.error('main; ' + str(e))
     delete_pod()
