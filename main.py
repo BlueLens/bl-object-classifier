@@ -36,6 +36,7 @@ AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY'].replace('"', '')
 MAX_PROCESS_NUM = int(os.environ['MAX_PROCESS_NUM'])
 
 REDIS_PRODUCT_CLASSIFY_QUEUE = 'bl_product_classify_queue'
+REDIS_PRODUCT_CLASSIFY_TEXT_QUEUE = 'bl:product:classify:text:queue'
 REDIS_OBJECT_INDEX_QUEUE = 'bl:object:index:queue'
 REDIS_PRODUCT_HASH = 'bl:product:hash'
 REDIS_PRODUCT_IMAGE_PROCESS_QUEUE = 'bl:product:image:process:queue'
@@ -65,11 +66,19 @@ def analyze_product(p_data):
   try:
     main_class_code, main_objects = analyze_main_image(product)
   except Exception as e:
-    log.error('analyze_product:' + str(e))
+    log.error('analyze_product:main_image' + str(e))
     delete_product_from_db(str(product['_id']))
     return
 
-  sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
+  try:
+    sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
+  except Exception as e:
+    log.error('analyze_product:sub_image' + str(e))
+    image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
+    update_image_id_to_object_db(obj_ids, image_id)
+    save_main_image_as_object(product, image_id)
+    set_product_is_classified(product)
+    return
 
   save_objects = []
   for obj in sub_objects:
@@ -77,13 +86,15 @@ def analyze_product(p_data):
       save_objects.append(obj)
 
   image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
-
   update_image_id_to_object_db(obj_ids, image_id)
-
   save_main_image_as_object(product, image_id)
   save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
-
   set_product_is_classified(product)
+
+  data = {}
+  data['product_id'] = str(product['_id'])
+  data['image_id'] = image_id
+  push_image_to_queue(data)
   # color = analyze_color(p_dict)
 
 def get_latest_crawl_version():
@@ -345,9 +356,9 @@ def save_main_image_as_object(product, image_id):
   save_object_to_db(object)
   # push_object_to_queue(object)
 
-def push_object_to_queue(obj):
-  log.info('push_object_to_queue')
-  rconn.lpush(REDIS_OBJECT_INDEX_QUEUE, pickle.dumps(obj, protocol=2))
+def push_image_to_queue(data):
+  log.info('push_image_to_queue')
+  rconn.lpush(REDIS_PRODUCT_CLASSIFY_TEXT_QUEUE, pickle.dumps(data))
 
 def save_object_to_db(obj):
   log.info('save_object_to_db')
@@ -381,11 +392,15 @@ def delete_pod():
 
 def save_to_storage(obj):
   log.debug('save_to_storage')
-  file = obj['name'] + '.jpg'
-  key = os.path.join(RELEASE_MODE, obj['class_code'], file)
-  is_public = True
-  path = storage.upload_file_to_bucket(AWS_OBJ_IMAGE_BUCKET, file, key, is_public=is_public)
-  obj['image_url'] = path
+  try:
+    file = obj['name'] + '.jpg'
+    key = os.path.join(RELEASE_MODE, obj['class_code'], file)
+    is_public = True
+    path = storage.upload_file_to_bucket(AWS_OBJ_IMAGE_BUCKET, file, key, is_public=is_public)
+    obj['image_url'] = path
+  except Exception as e:
+    log.error('save_to_storage: ' + str(e))
+
   log.debug('save_to_storage done')
 
 def start(rconn):
@@ -409,7 +424,7 @@ def start(rconn):
 
 if __name__ == '__main__':
   try:
-    log.info('Start bl-object-classifier:3')
+    log.info('Start bl-object-classifier:5')
     start(rconn)
   except Exception as e:
     log.error('main; ' + str(e))
