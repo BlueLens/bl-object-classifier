@@ -67,7 +67,6 @@ def analyze_product(p_data):
     main_class_code, main_objects = analyze_main_image(product)
   except Exception as e:
     log.error('analyze_product:main_image' + str(e))
-    delete_product_from_db(str(product['_id']))
     return
 
   try:
@@ -88,7 +87,10 @@ def analyze_product(p_data):
   image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
   update_image_id_to_object_db(obj_ids, image_id)
   save_main_image_as_object(product, image_id)
-  save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
+
+  if len(save_objects) > 0:
+    save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
+
   set_product_is_classified(product)
 
   data = {}
@@ -103,8 +105,19 @@ def get_latest_crawl_version():
 
 def set_product_is_classified(product):
   try:
-    product['is_classified'] = True
-    product_api.update_product_by_id(str(product['_id']), product)
+    p = {}
+    p['is_classified'] = True
+    p['is_unavailable'] = True
+    product_api.update_product_by_id(str(product['_id']), p)
+  except Exception as e:
+    log.error(str(e))
+
+def set_product_is_unavailable(product):
+  try:
+    p = {}
+    p['is_classified'] = True
+    p['is_unavailable'] = True
+    product_api.update_product_by_id(str(product['_id']), p)
   except Exception as e:
     log.error(str(e))
 
@@ -163,9 +176,16 @@ def save_image_to_db(product, class_code, objects):
   image['product_url'] = product['product_url']
   image['price'] = product['price']
   image['host_code'] = product['host_code']
+  image['host_url'] = product['host_url']
   image['host_name'] = product['host_name']
   image['product_no'] = product['product_no']
+  image['product_name'] = product['name']
   image['class_code'] = class_code
+  image['currency_unit'] = product.get('currency_unit', None)
+  image['nation'] = product.get('nation', None)
+  image['tags'] = product.get('tags', None)
+  image['cate'] = product.get('cate', None)
+  image['sale_price'] = product.get('sale_price', None)
   image['objects'] = object_ids
   image['version_id'] = version_id
 
@@ -203,7 +223,7 @@ def analyze_main_image(product):
   objects = []
 
   try:
-    class_code, detected_objects = object_detect(image)
+    class_code, detected_objects = object_detect(image, product)
     if class_code is not None:
       classes.append(class_code)
       objects.extend(detected_objects)
@@ -258,7 +278,7 @@ def analyze_sub_images(images):
 
   return final_class, final_objects
 
-def object_detect(image_path):
+def object_detect(image_path, product):
   log.info('object_detect:start')
   start_time = time.time()
   #log.info(image_path)
@@ -306,6 +326,9 @@ def object_detect(image_path):
 
   except Exception as e:
     log.error('object_detect:' + str(e))
+    if 'StatusCode.UNKNOWN' in str(e):
+      # delete_product_from_db(str(product['_id']))
+      set_product_is_unavailable(product)
     return
 
   final_class = None
@@ -324,6 +347,7 @@ def object_detect(image_path):
   return final_class, detected_objects
 
 def delete_product_from_db(product_id):
+  log.info('delete_product_from_db: ' + product_id)
   try:
     product_api.delete_product(product_id)
   except Exception as e:
