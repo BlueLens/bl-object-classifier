@@ -87,6 +87,10 @@ def analyze_product(p_data):
   #     save_objects.append(obj)
 
   image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
+  if image_id is None:
+    set_product_is_classified(product)
+    return
+
   update_image_id_to_object_db(obj_ids, image_id)
   save_main_image_as_object(product, image_id)
 
@@ -142,15 +146,16 @@ def save_objects_to_db(product_id, image_id, class_code, objects):
     save_to_storage(object)
 
     object_id = save_object_to_db(object)
-    save_feature_to_db(object_id, obj['feature'])
+    save_feature_to_db(object_id, obj['feature'], version_id)
     # push_object_to_queue(object)
   # obj_img.show()
 
-def save_feature_to_db(object_id, feature):
+def save_feature_to_db(object_id, feature, version_id):
   data = {}
 
   data['object_id'] = object_id
   data['vector'] = feature
+  data['version_id'] = version_id
   try:
     feature_id = feature_api.add_feature(data)
     if feature_id is not None:
@@ -185,7 +190,7 @@ def save_image_to_db(product, class_code, objects):
     feature = obj.pop('feature')
     object_id = save_object_to_db(obj)
     object_ids.append(object_id)
-    save_feature_to_db(object_id, feature)
+    save_feature_to_db(object_id, feature, version_id)
 
   image = {}
   image['product_id'] = str(product['_id'])
@@ -221,7 +226,7 @@ def save_image_to_db(product, class_code, objects):
   except Exception as e:
     log.warn("Exception when calling add_image: %s\n" % e)
 
-  return None
+  return None, None
 
 def analyze_color(product):
   log.debug('analyze_color')
