@@ -20,8 +20,7 @@ redis==2.10.6
 s3transfer==0.1.11
 six==1.11.0
 stylelens-image==0.0.5
-stylelens-object==0.0.23
+stylelens-object==0.0.33
 stylelens-product==1.0.50
-tensorflow-tensorboard==0.4.0rc3
 urllib3==1.22
 Werkzeug==0.12.2

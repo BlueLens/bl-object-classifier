@@ -13,6 +13,7 @@ from bluelens_spawning_pool import spawning_pool
 from detect.object_detect import ObjectDetector
 from stylelens_product.products import Products
 from stylelens_object.objects import Objects
+from stylelens_object.features import Features
 from stylelens_image.images import Images
 from util import s3
 import redis
@@ -56,6 +57,7 @@ heart_bit = True
 
 product_api = Products()
 object_api = Objects()
+feature_api = Features()
 image_api = Images()
 version_id = None
 
@@ -69,27 +71,28 @@ def analyze_product(p_data):
     log.error('analyze_product:main_image' + str(e))
     return
 
-  try:
-    sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
-  except Exception as e:
-    log.error('analyze_product:sub_image' + str(e))
-    image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
-    update_image_id_to_object_db(obj_ids, image_id)
-    save_main_image_as_object(product, image_id)
-    set_product_is_classified(product)
-    return
-
-  save_objects = []
-  for obj in sub_objects:
-    if obj['class_code'] == main_class_code:
-      save_objects.append(obj)
+  #Todo Need to uncomment when we can analyze sub images
+  # try:
+  #   sub_class_code, sub_objects = analyze_sub_images(product['sub_images_mobile'])
+  # except Exception as e:
+  #   log.error('analyze_product:sub_image' + str(e))
+  #   image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
+  #   update_image_id_to_object_db(obj_ids, image_id)
+  #   save_main_image_as_object(product, image_id)
+  #   set_product_is_classified(product)
+  #   return
+  # save_objects = []
+  # for obj in sub_objects:
+  #   if obj['class_code'] == main_class_code:
+  #     save_objects.append(obj)
 
   image_id, obj_ids = save_image_to_db(product, main_class_code, main_objects)
   update_image_id_to_object_db(obj_ids, image_id)
   save_main_image_as_object(product, image_id)
 
-  if len(save_objects) > 0:
-    save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
+  #Todo Need to uncomment when we can analyze sub images
+  # if len(save_objects) > 0:
+  #   save_objects_to_db(str(product['_id']), image_id, main_class_code, save_objects)
 
   set_product_is_classified(product)
 
@@ -107,7 +110,7 @@ def set_product_is_classified(product):
   try:
     p = {}
     p['is_classified'] = True
-    p['is_unavailable'] = True
+    p['is_unavailable'] = False
     product_api.update_product_by_id(str(product['_id']), p)
   except Exception as e:
     log.error(str(e))
@@ -134,15 +137,28 @@ def save_objects_to_db(product_id, image_id, class_code, objects):
     object['class_code'] = class_code
     object['name'] = obj['name']
     object['version_id'] = version_id
-    # feature = np.fromstring(obj['feature'], dtype=np.float32)
-    # object['feature'] = feature.tolist()
-    object['feature'] = obj['feature']
+    # object['feature'] = obj['feature']
 
     save_to_storage(object)
-    save_object_to_db(object)
 
+    object_id = save_object_to_db(object)
+    save_feature_to_db(object_id, obj['feature'])
     # push_object_to_queue(object)
   # obj_img.show()
+
+def save_feature_to_db(object_id, feature):
+  data = {}
+
+  data['object_id'] = object_id
+  data['vector'] = feature
+  try:
+    feature_id = feature_api.add_feature(data)
+    if feature_id is not None:
+      return feature_id
+    else:
+      return None
+  except Exception as e:
+    log.warn("Exception when calling save_feature_to_db: %s\n" % e)
 
 def update_image_id_to_object_db(object_ids, image_id):
   log.info('update_image_id_to_object_db')
@@ -166,8 +182,10 @@ def save_image_to_db(product, class_code, objects):
     obj['storage'] = 's3'
     obj['is_main'] = False
     obj['bucket'] = AWS_OBJ_IMAGE_BUCKET
+    feature = obj.pop('feature')
     object_id = save_object_to_db(obj)
     object_ids.append(object_id)
+    save_feature_to_db(object_id, feature)
 
   image = {}
   image['product_id'] = str(product['_id'])
@@ -448,7 +466,7 @@ def start(rconn):
 
 if __name__ == '__main__':
   try:
-    log.info('Start bl-object-classifier:5')
+    log.info('Start bl-object-classifier:6')
     start(rconn)
   except Exception as e:
     log.error('main; ' + str(e))
