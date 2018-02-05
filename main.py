@@ -10,7 +10,7 @@ import urllib.request
 from collections import Counter
 import pickle
 from bluelens_spawning_pool import spawning_pool
-from detect.object_detect import ObjectDetector
+from stylelens_detect.object_detect import ObjectDetector
 from stylelens_product.products import Products
 from stylelens_object.objects import Objects
 from stylelens_object.features import Features
@@ -62,7 +62,7 @@ image_api = Images()
 version_id = None
 
 def analyze_product(p_data):
-  log.info('analyze_product')
+  # log.info('analyze_product')
   product = pickle.loads(p_data)
 
   try:
@@ -103,6 +103,9 @@ def analyze_product(p_data):
   data = {}
   data['product_id'] = str(product['_id'])
   data['image_id'] = image_id
+  data['product_name'] = product.get('name')
+  data['category'] = product.get('cate')
+  data['tags'] = product.get('tags')
   push_image_to_queue(data)
   # color = analyze_color(p_dict)
 
@@ -114,7 +117,7 @@ def set_product_is_classified(product):
   try:
     p = {}
     p['is_classified'] = True
-    p['is_unavailable'] = False
+    p['is_available'] = True
     product_api.update_product_by_id(str(product['_id']), p)
   except Exception as e:
     log.error(str(e))
@@ -123,7 +126,7 @@ def set_product_is_unavailable(product):
   try:
     p = {}
     p['is_classified'] = True
-    p['is_unavailable'] = True
+    p['is_available'] = False
     product_api.update_product_by_id(str(product['_id']), p)
   except Exception as e:
     log.error(str(e))
@@ -166,7 +169,7 @@ def save_feature_to_db(object_id, feature, version_id):
     log.warn("Exception when calling save_feature_to_db: %s\n" % e)
 
 def update_image_id_to_object_db(object_ids, image_id):
-  log.info('update_image_id_to_object_db')
+  # log.info('update_image_id_to_object_db')
   try:
     for id in object_ids:
       obj = {}
@@ -176,7 +179,7 @@ def update_image_id_to_object_db(object_ids, image_id):
     log.warn("Exception when calling update_object_by_id: %s\n" % e)
 
 def save_image_to_db(product, class_code, objects):
-  log.info('save_image_to_db')
+  # log.info('save_image_to_db')
   global version_id
 
   object_ids = []
@@ -184,6 +187,8 @@ def save_image_to_db(product, class_code, objects):
     save_to_storage(obj)
     obj['product_id'] = str(product['_id'])
     obj['version_id'] = version_id
+    obj['host_code'] = product['host_code']
+    obj['host_group'] = product['host_group']
     obj['storage'] = 's3'
     obj['is_main'] = False
     obj['bucket'] = AWS_OBJ_IMAGE_BUCKET
@@ -199,6 +204,7 @@ def save_image_to_db(product, class_code, objects):
   image['product_url'] = product['product_url']
   image['price'] = product['price']
   image['host_code'] = product['host_code']
+  image['host_group'] = product['host_group']
   image['host_url'] = product['host_url']
   image['host_name'] = product['host_name']
   image['product_no'] = product['product_no']
@@ -222,24 +228,24 @@ def save_image_to_db(product, class_code, objects):
       if 'upserted' in api_response:
         image_id = str(api_response['upserted'])
         return image_id, object_ids
-    log.debug(api_response)
+    # log.debug(api_response)
   except Exception as e:
     log.warn("Exception when calling add_image: %s\n" % e)
 
   return None, None
 
 def analyze_color(product):
-  log.debug('analyze_color')
+  # log.debug('analyze_color')
   color = ''
   return color
 
 def analyze_category(product):
-  log.debug('analyze_category')
+  # log.debug('analyze_category')
   category = 1
   return category
 
 def analyze_main_image(product):
-  log.info('analyze_main_image')
+  # log.info('analyze_main_image')
 
   image = product['main_image_mobile_full']
   classes = []
@@ -247,24 +253,25 @@ def analyze_main_image(product):
 
   try:
     class_code, detected_objects = object_detect(image, product)
-    if class_code is not None:
+    if class_code != None and detected_objects != None:
       classes.append(class_code)
       objects.extend(detected_objects)
   except Exception as e:
-    log.error('analyze_main_image2:' + str(e))
+    log.error('analyze_main_image2: ' + str(e))
     return
 
   final_class = None
   score = 0.0
-  for obj in objects:
-    if obj['score'] > score:
-      score = obj['score']
-      final_class = obj['class_code']
+  if len(objects) > 0:
+    for obj in objects:
+      if obj['score'] > score:
+        score = obj['score']
+        final_class = obj['class_code']
 
   return final_class, objects
 
 def analyze_sub_images(images):
-  log.info('analyze_sub_images')
+  # log.info('analyze_sub_images')
 
   classes = []
   objects = []
@@ -302,7 +309,7 @@ def analyze_sub_images(images):
   return final_class, final_objects
 
 def object_detect(image_path, product):
-  log.info('object_detect:start')
+  # log.info('object_detect:start')
   start_time = time.time()
   #log.info(image_path)
   try:
@@ -370,14 +377,14 @@ def object_detect(image_path, product):
   return final_class, detected_objects
 
 def delete_product_from_db(product_id):
-  log.info('delete_product_from_db: ' + product_id)
+  # log.info('delete_product_from_db: ' + product_id)
   try:
     product_api.delete_product(product_id)
   except Exception as e:
     log.error(str(e))
 
 def save_main_image_as_object(product, image_id):
-  log.info('save_main_image_as_object')
+  # log.info('save_main_image_as_object')
   global version_id
   try:
     f = urllib.request.urlopen(product['main_image'])
@@ -394,6 +401,8 @@ def save_main_image_as_object(product, image_id):
   object['bucket'] = AWS_OBJ_IMAGE_BUCKET
   object['class_code'] = '0'
   object['is_main'] = True
+  object['host_code'] = product['host_code']
+  object['host_group'] = product['host_group']
   object['image_id'] = image_id
   object['version_id'] = version_id
   id = str(uuid.uuid4())
@@ -404,14 +413,14 @@ def save_main_image_as_object(product, image_id):
   # push_object_to_queue(object)
 
 def push_image_to_queue(data):
-  log.info('push_image_to_queue')
+  # log.info('push_image_to_queue')
   rconn.lpush(REDIS_PRODUCT_CLASSIFY_TEXT_QUEUE, pickle.dumps(data))
 
 def save_object_to_db(obj):
-  log.info('save_object_to_db')
+  # log.info('save_object_to_db')
   try:
     object_id = object_api.add_object(obj)
-    log.debug(object_id)
+    # log.debug(object_id)
   except Exception as e:
     log.warn("Exception when calling add_object: %s\n" % e)
   return object_id
@@ -438,7 +447,7 @@ def delete_pod():
   spawn.delete(data)
 
 def save_to_storage(obj):
-  log.debug('save_to_storage')
+  # log.debug('save_to_storage')
   try:
     file = obj['name'] + '.jpg'
     key = os.path.join(RELEASE_MODE, obj['class_code'], file)
@@ -448,7 +457,7 @@ def save_to_storage(obj):
   except Exception as e:
     log.error('save_to_storage: ' + str(e))
 
-  log.debug('save_to_storage done')
+  # log.debug('save_to_storage done')
 
 def start(rconn):
   global version_id
@@ -471,7 +480,7 @@ def start(rconn):
 
 if __name__ == '__main__':
   try:
-    log.info('Start bl-object-classifier:6')
+    log.info('Start bl-object-classifier:4')
     start(rconn)
   except Exception as e:
     log.error('main; ' + str(e))

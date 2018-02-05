@@ -3,10 +3,11 @@ bluelens-log==1.0.2
 bluelens-spawning-pool==1.0.10
 boto3==1.4.7
 botocore==1.7.47
-certifi==2017.11.5
+certifi==2018.1.18
 docutils==0.14
 enum34==1.1.6
 grpcio==1.7.0
+grpcio-tools==1.8.4
 html5lib==0.9999999
 jmespath==0.9.3
 Markdown==2.6.9
@@ -19,8 +20,9 @@ python-dateutil==2.6.1
 redis==2.10.6
 s3transfer==0.1.11
 six==1.11.0
-stylelens-image==0.0.5
-stylelens-object==0.0.33
-stylelens-product==1.0.50
+stylelens-detect==1.0.2
+stylelens-image==0.0.9
+stylelens-object==0.0.40
+stylelens-product==1.0.67
 urllib3==1.22
 Werkzeug==0.12.2
