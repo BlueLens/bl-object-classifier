@@ -10,12 +10,12 @@ import urllib.request
 from collections import Counter
 import pickle
 from bluelens_spawning_pool import spawning_pool
-from stylelens_detect.object_detect import ObjectDetector
+from detect.object_detect import ObjectDetector
 from stylelens_product.products import Products
 from stylelens_object.objects import Objects
 from stylelens_object.features import Features
 from stylelens_image.images import Images
-from util import s3
+from stylelens_s3 import s3
 import redis
 
 from bluelens_log import Logging
@@ -33,6 +33,9 @@ REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
 RELEASE_MODE = os.environ['RELEASE_MODE']
 AWS_ACCESS_KEY = os.environ['AWS_ACCESS_KEY'].replace('"', '')
 AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY'].replace('"', '')
+FEATURE_GRPC_HOST = os.environ['FEATURE_GRPC_HOST']
+FEATURE_GRPC_PORT = os.environ['FEATURE_GRPC_PORT']
+OD_SCORE_MIN = os.environ['OD_SCORE_MIN']
 
 MAX_PROCESS_NUM = int(os.environ['MAX_PROCESS_NUM'])
 
@@ -60,6 +63,7 @@ object_api = Objects()
 feature_api = Features()
 image_api = Images()
 version_id = None
+obj_detector = None
 
 def analyze_product(p_data):
   # log.info('analyze_product')
@@ -323,15 +327,17 @@ def object_detect(image_path, product):
 
   classes = []
   detected_objects = []
+  global obj_detector
   try:
-    obj_detector = ObjectDetector()
     objects = obj_detector.getObjects(tmp_img)
     for obj in objects:
       #log.info(obj.class_name + ':' + str(obj.score))
-      left = obj.location.left
-      right = obj.location.right
-      top = obj.location.top
-      bottom = obj.location.bottom
+      location = obj.get('location')
+
+      left =   location.get('left')
+      right =  location.get('right')
+      top =    location.get('top')
+      bottom = location.get('bottom')
       area = (left, top, left + abs(left-right), top + abs(bottom-top))
       obj_img = im.crop(area)
       size = OBJECT_IMAGE_WIDTH, OBJECT_IMAGE_HEITH
@@ -340,12 +346,12 @@ def object_detect(image_path, product):
       id = str(uuid.uuid4())
       tmp_obj_img = id + '.jpg'
       obj_img.save(tmp_obj_img)
-      classes.append(obj.class_code)
+      classes.append(obj.get('class_code'))
       image_obj = {}
-      image_obj['class_code'] = obj.class_code
+      image_obj['class_code'] = obj.get('class_code')
       image_obj['name'] = id
-      image_obj['score'] = obj.score
-      image_obj['feature'] = obj.feature
+      image_obj['score'] = obj.get('score')
+      image_obj['feature'] = obj.get('feature')
       box = {}
       box['left'] = left
       box['right'] = right
@@ -461,7 +467,9 @@ def save_to_storage(obj):
 
 def start(rconn):
   global version_id
+  global obj_detector
   version_id = get_latest_crawl_version()
+  obj_detector = ObjectDetector()
 
   log.info('Start dispatch_job')
 
